@@ -1,0 +1,59 @@
+name: rebuild-current-zp-clean
+
+on:
+  push:
+    branches:
+      - tmp-zp-v5-targetcam
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract current source
+        shell: pwsh
+        run: |
+          Expand-Archive -Path "ci_current/source.zip" -DestinationPath "." -Force
+          New-Item -ItemType Directory -Force -Path "ZP_Control_Estreito\evidence" | Out-Null
+          Get-ChildItem "ZP_Control_Estreito\src"
+          Get-ChildItem "ZP_Control_Estreito\include"
+
+      - name: Setup Zig 0.13.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+
+      - name: Build Windows x86 with project build script
+        shell: pwsh
+        working-directory: ZP_Control_Estreito
+        run: |
+          python tools/build.py --zig zig
+
+      - name: Verify binaries
+        shell: pwsh
+        working-directory: ZP_Control_Estreito
+        run: |
+          Get-Item bin\silent_reconstruido.dll
+          Get-Item bin\testar_source.exe
+          bin\core_tests.exe
+          bin\menu_tests.exe
+          bin\aim_style_tests.exe
+          bin\skeleton_tests.exe
+          bin\update_tests.exe
+          bin\modern_tests.exe
+          bin\read_tests.exe
+          bin\fps_tests.exe
+          bin\name_tests.exe
+          bin\visual_tests.exe
+
+      - name: Upload clean build
+        uses: actions/upload-artifact@v4
+        with:
+          name: zp-current-clean-bin
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            ZP_Control_Estreito/bin/*
+            ZP_Control_Estreito/evidence/build.json
