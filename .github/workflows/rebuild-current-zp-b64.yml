@@ -1,0 +1,81 @@
+name: rebuild-current-zp-b64
+
+on:
+  push:
+    branches:
+      - tmp-zp-v5-targetcam
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct current source
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem "ci_current_b64\chunk_*" | Sort-Object Name
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ""
+          [IO.File]::WriteAllBytes("source.zip",[Convert]::FromBase64String($b64))
+          $hash = (Get-FileHash "source.zip" -Algorithm SHA256).Hash.ToLower()
+          Write-Host "SOURCE SHA256=$hash"
+          if ($hash -ne "4b66a980e8d3e8a0a5307dffc9fbaada43e24a48ea2c3f98823c8a856e5982db") { throw "source hash mismatch" }
+          Expand-Archive -Path "source.zip" -DestinationPath "." -Force
+          New-Item -ItemType Directory -Force -Path "ZP_Control_Estreito\evidence" | Out-Null
+
+      - name: Improve launcher LoadLibrary diagnostic
+        shell: pwsh
+        run: |
+          $p = "ZP_Control_Estreito\src\test_launcher.cpp"
+          $s = Get-Content $p -Raw
+          $old = 'if(!got||!remoteModule)return error("LoadLibraryW nao carregou a DLL");'
+          $new = 'if(!got)return error("nao foi possivel obter o retorno de LoadLibraryW");if(!remoteModule){std::puts("Falha: LoadLibraryW retornou NULL dentro do processo; a DLL nao foi carregada/inicializada.");return 1;}'
+          if (-not $s.Contains($old)) { throw "launcher pattern not found" }
+          [IO.File]::WriteAllText($p,$s.Replace($old,$new))
+
+      - name: Setup Zig 0.13.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+
+      - name: Build Windows x86
+        shell: pwsh
+        working-directory: ZP_Control_Estreito
+        run: |
+          python tools/build.py --zig zig
+
+      - name: Run tests
+        shell: cmd
+        working-directory: ZP_Control_Estreito
+        run: |
+          bin\core_tests.exe
+          bin\menu_tests.exe
+          bin\aim_style_tests.exe
+          bin\skeleton_tests.exe
+          bin\update_tests.exe
+          bin\modern_tests.exe
+          bin\read_tests.exe
+          bin\fps_tests.exe
+          bin\name_tests.exe
+          bin\visual_tests.exe
+
+      - name: Show binary sizes
+        shell: pwsh
+        working-directory: ZP_Control_Estreito
+        run: |
+          Get-Item bin\silent_reconstruido.dll | Format-List Name,Length
+          Get-Item bin\testar_source.exe | Format-List Name,Length
+          Get-FileHash bin\silent_reconstruido.dll -Algorithm SHA256
+          Get-FileHash bin\testar_source.exe -Algorithm SHA256
+
+      - name: Upload clean build
+        uses: actions/upload-artifact@v4
+        with:
+          name: zp-current-clean-bin
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            ZP_Control_Estreito/bin/*
+            ZP_Control_Estreito/evidence/build.json
+            ZP_Control_Estreito/src/test_launcher.cpp
